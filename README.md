@@ -1,33 +1,37 @@
-# 💳 CreditIQ: Intelligent Credit Risk Scoring System
+# Project 4: CreditIQ — Intelligent Credit Risk Scoring System
+## From Borrower Profiling to Real-Time Default Prediction
 
-> **An AI-powered risk intelligence platform for evaluating borrower profiles and predicting loan default probabilities.**
+### Project Overview
 
-This project uses a robust Machine Learning pipeline and a premium Streamlit web application to provide real-time credit risk assessments. Built with **Scikit-learn**, it supports evaluating applicants instantly through an interactive interface, relying on models trained on thousands of historical loan applications.
+This project involves the design and implementation of an **AI-powered credit risk intelligence platform** that evaluates borrower profiles and predicts loan default probabilities using classical machine learning.
 
----
-
-## ✨ Key Features
-
-- **Real-Time Risk Prediction**: An interactive frontend form accepts applicant details (Age, Income, Home Ownership, Loan Intent, etc.) and returns an instant credit risk assessment.
-- **Risk Banding & Grading**: Automatically assigns applicants into **LOW**, **MEDIUM**, or **HIGH** risk tiers. It also generates a simulated Loan Grade (A-G) based on a composite risk score.
-- **Multi-Model Support**: Compare predictions between the primary **Decision Tree Classifier** and a secondary benchmark **Logistic Regression** model.
-- **Performance Dashboards**: View comprehensive evaluation metrics within the app, including Accuracy, ROC-AUC, F1-Scores, Confusion Matrices, Classification Reports, and Feature Importance.
-- **Premium Dark-Themed UI**: A highly customized Streamlit interface built with extensive custom CSS, featuring clean typography (Google Fonts), hover animations, probability gauges, and stylized metric cards.
-- **Data-Driven Insights**: Top risk drivers and feature importance scores explain _why_ a particular decision was made for an applicant.
+- **Milestone 1:** Data cleaning, exploratory analysis, and classical ML model training applied to historical loan application data to predict credit risk and identify key default drivers.
+- **Milestone 2:** Production-grade Streamlit application with multi-model support, risk banding, explainability features, and a premium dark-themed dashboard UI.
 
 ---
 
-## 🛠️ Tech Stack
+### Constraints & Requirements
 
-- **Frontend Application**: [Streamlit](https://streamlit.io/)
-- **Machine Learning**: [Scikit-learn](https://scikit-learn.org/) (Decision Tree Classifier, Logistic Regression)
-- **Data Processing**: Pandas, NumPy
-- **Visualizations**: Matplotlib, Seaborn, Plotly, Altair
-- **Serialization**: Pickle
+- **Team Size:** 3–4 Students
+- **Dataset:** Kaggle Credit Risk Dataset (32,500+ rows)
+- **Framework:** Scikit-learn (Classical ML — no LLMs required)
+- **Hosting:** Mandatory (Streamlit Cloud or equivalent)
 
 ---
 
-## 📁 Project Structure
+### Technology Stack
+
+| Component | Technology |
+| :--- | :--- |
+| **ML Models** | Decision Tree Classifier, Logistic Regression, Scikit-Learn |
+| **Data Processing** | Pandas, NumPy |
+| **UI Framework** | Streamlit (Custom CSS, Dark Theme) |
+| **Visualizations** | Matplotlib, Seaborn, Plotly, Altair |
+| **Serialization** | Pickle |
+
+---
+
+### Project Structure
 
 ```text
 Credit_Score_Capstone_Project_GenAI/
@@ -42,91 +46,111 @@ Credit_Score_Capstone_Project_GenAI/
 │   └── cleaned/
 │       └── cleaned_credit_risk.csv          # Fully cleaned & processed dataset
 └── notebook/
-    ├── data_cleaning.ipynb                  # Data cleaning & EDA Jupyter notebook
+    ├── data_cleaning.ipynb                  # Data cleaning & EDA notebook
     └── model_training.ipynb                 # ML model training & evaluation notebook
 ```
 
 ---
 
-## 🔬 How It Works
+### Milestones & Deliverables
 
-### 1. Data Cleaning (`data_cleaning.ipynb`)
+#### Milestone 1: Data Pipeline & ML Model Training (Mid-Sem)
 
-The pipeline begins with raw data from Kaggle. Outliers (like impossible ages or 60+ year employment histories) are clipped using IQR bounds rather than deleted, and missing values in interest rates and employment lengths are imputed using medians. A custom `loan_grade` was also simulated for better portfolio analysis.
+**Objective:** Build a robust data cleaning pipeline and train interpretable ML models on historical loan data — focused on classical ML techniques *without LLMs*.
 
-### 2. Model Training (`model_training.ipynb`)
+**Key Deliverables:**
+- Problem understanding & business context.
+- System architecture diagram.
+- EDA and data cleaning notebook (`data_cleaning.ipynb`).
+- Trained model pipeline serialized to `dt_model.pkl`.
+- Model performance evaluation report (Accuracy, F1, ROC-AUC).
 
-We trained two separate models to balance baseline linear insights against non-linear pattern recognition:
+#### Milestone 2: Interactive Risk Scoring Application (End-Sem)
 
-- **Decision Tree (Primary)**: Tuned with `max_depth=10`, acting as the main predictor. Achieves ~91.0% Test Accuracy.
-- **Logistic Regression (Secondary)**: Used as a benchmark.
-  The pipeline packages StandardScaler, LabelEncoders, Evaluation Metrics, and both Models into a single `dt_model.pkl` file for seamless production deployment.
+**Objective:** Deploy a fully interactive application that accepts applicant data in real time, scores credit risk, explains predictions, and presents model performance dashboards.
 
-### 3. Application (`app.py`)
-
-The Streamlit app loads the `dt_model.pkl` artifact. When an applicant's data is entered, the app encodes the categorical features, scales the numerics, and calculates the Default Probability using `.predict_proba()`. The result defines the risk class, progress bars, and feature importance explanations on the UI.
-
----
-
-## 📝 Input Features
-
-The model relies on up to 10 crucial features:
-
-- `person_age`: Applicant's Age (18-100)
-- `person_income`: Annual Income ($)
-- `person_home_ownership`: RENT, OWN, MORTGAGE, or OTHER
-- `person_emp_length`: Employment length in years
-- `loan_intent`: PERSONAL, EDUCATION, MEDICAL, VENTURE, HOME IMPROVEMENT, or DEBT CONSOLIDATION
-- `loan_amnt`: Total Loan Amount Requested ($)
-- `loan_int_rate`: Interest Rate (%)
-- `cb_person_default_on_file`: Historical default on file (Y/N)
-- `cb_person_cred_hist_length`: Credit history length in years
-- `loan_percent_income`: (Auto-calculated) Loan Amount ÷ Income
+**Key Deliverables:**
+- **Publicly deployed application** (Link required).
+- Real-time risk prediction with probability scores and risk banding (LOW / MEDIUM / HIGH).
+- Simulated Loan Grade assignment (A–G) based on composite risk score.
+- Multi-model comparison (Decision Tree vs. Logistic Regression).
+- Feature importance explanations for each prediction.
+- GitHub Repository & Complete Codebase.
+- Demo Video (Max 5 mins).
 
 ---
 
-## 🚀 Setup & Installation
+### How It Works
 
-Follow these steps to run the application locally:
+**Step 1 — Data Cleaning (`data_cleaning.ipynb`)**
+Raw Kaggle data is preprocessed using IQR-based clipping for outliers (e.g., impossible ages, 60+ year employment histories) and median imputation for missing interest rates and employment lengths. A simulated `loan_grade` feature is engineered for portfolio-level analysis.
 
-### 1. Clone the repository
+**Step 2 — Model Training (`model_training.ipynb`)**
+Two models are trained to balance linear insights against non-linear pattern recognition. The pipeline packages StandardScaler, LabelEncoders, evaluation metrics, and both models into a single `dt_model.pkl` artifact for deployment.
+
+**Step 3 — Application (`app.py`)**
+The Streamlit app loads the serialized pipeline, encodes categorical inputs, scales numerics, and computes default probability via `.predict_proba()`. Results are rendered as risk tiers, probability gauges, and feature importance breakdowns.
+
+---
+
+### Input Features
+
+The model relies on 10 core features:
+
+| Feature | Description |
+| :--- | :--- |
+| `person_age` | Applicant's age (18–100) |
+| `person_income` | Annual income ($) |
+| `person_home_ownership` | RENT, OWN, MORTGAGE, or OTHER |
+| `person_emp_length` | Employment length (years) |
+| `loan_intent` | PERSONAL, EDUCATION, MEDICAL, VENTURE, HOME IMPROVEMENT, DEBT CONSOLIDATION |
+| `loan_amnt` | Loan amount requested ($) |
+| `loan_int_rate` | Interest rate (%) |
+| `cb_person_default_on_file` | Historical default on file (Y/N) |
+| `cb_person_cred_hist_length` | Credit history length (years) |
+| `loan_percent_income` | Auto-calculated: Loan Amount ÷ Income |
+
+---
+
+### Evaluation & Performance
+
+| Model | Training Accuracy | Testing Accuracy | Notes |
+| :--- | :--- | :--- | :--- |
+| **Decision Tree** | ~92.9% | ~91.0% | Primary model, tuned with `max_depth=10` |
+| **Logistic Regression** | — | — | Secondary benchmark model |
+
+Comprehensive metric reports (Precision, Recall, F1) and interactive Confusion Matrices are available in the **Performance** tab of the Streamlit application.
+
+---
+
+### Evaluation Criteria
+
+| Phase | Weight | Criteria |
+| :--- | :--- | :--- |
+| **Mid-Sem** | 25% | ML technique application, Feature Engineering, UI Usability, Evaluation Metrics. |
+| **End-Sem** | 30% | Prediction accuracy, Explainability quality, UI/UX polish, Deployment success. |
+
+> [!WARNING]
+> Localhost-only demonstrations will **not** be accepted for final submission. The application must be publicly hosted.
+
+---
+
+### Setup & Installation
 
 ```bash
+# 1. Clone the repository
 git clone <repository-url>
 cd Credit_Score_Capstone_Project_GenAI
-```
 
-### 2. Create a Virtual Environment (Optional but Recommended)
-
-```bash
+# 2. Create and activate a virtual environment (recommended)
 python -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-```
+source venv/bin/activate        # Windows: venv\Scripts\activate
 
-### 3. Install Dependencies
-
-```bash
+# 3. Install dependencies
 pip install -r requirements.txt
-```
 
-### 4. Run the Application
-
-Ensure that `dt_model.pkl` is located in the root directory. Then execute:
-
-```bash
+# 4. Run the application
 streamlit run app.py
 ```
 
-The application will launch in your default web browser (typically on `http://localhost:8501`).
-
----
-
-## 📊 Evaluation & Performance
-
-The Decision Tree algorithm was selected based on its strong predictive capability and explainability.
-
-- **Training Accuracy**: ~92.9%
-- **Testing Accuracy**: ~91.0%
-- **ROC-AUC**: Evaluates the model's ability to distinguish between Good Loans and Defaults.
-
-_Comprehensive metric reports (Precision, Recall, F1) and interactive Confusion Matrices can be explored directly within the **Performance** tab of the Streamlit application._
+The application will launch in your default browser at `http://localhost:8501`.
