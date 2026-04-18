@@ -39,9 +39,9 @@ from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunct
 # =============================================================================
 
 # Groq models used in the pipeline.
-# STRONG: used for complex logic. (Using 3.1 70b as it often has better limits than 3.3).
-# FAST: used for planning, reflector, and fallback/economy mode.
-GROQ_MODEL_STRONG = "llama-3.1-70b-versatile"
+# GROQ_MODEL_STRONG: used for complex logic.
+# GROQ_MODEL_FAST: used for planning, reflector, and fallback/economy mode.
+GROQ_MODEL_STRONG = "llama-3.3-70b-versatile"
 GROQ_MODEL_FAST   = "llama-3.1-8b-instant"
 
 
@@ -1979,21 +1979,42 @@ def run_reporter(state, groq_client, verbose=True):
     }
 
     try:
-        resp = groq_client.chat.completions.create(
-            model=GROQ_MODEL_STRONG,
-            messages=[
-                {"role": "system", "content": _REPORTER_SYSTEM},
-                {
-                    "role":    "user",
-                    "content": (
-                        "Write the report for:\n"
-                        + json.dumps(enriched, indent=2, default=str)
-                    ),
-                },
-            ],
-            temperature=0.1,    # slight variation for natural-sounding prose
-            max_tokens=1024,
-        )
+        try:
+            # Primary attempt with STRONG model
+            resp = groq_client.chat.completions.create(
+                model=GROQ_MODEL_STRONG,
+                messages=[
+                    {"role": "system", "content": _REPORTER_SYSTEM},
+                    {
+                        "role":    "user",
+                        "content": (
+                            "Write the report for:\n"
+                            + json.dumps(enriched, indent=2, default=str)
+                        ),
+                    },
+                ],
+                temperature=0.1,    # slight variation for natural-sounding prose
+                max_tokens=1024,
+            )
+        except Exception as e:
+            # Fallback attempt with FAST model if STRONG fails
+            if verbose:
+                print(f"  [Reporter Error] Falling back to {GROQ_MODEL_FAST}...")
+            resp = groq_client.chat.completions.create(
+                model=GROQ_MODEL_FAST,
+                messages=[
+                    {"role": "system", "content": _REPORTER_SYSTEM},
+                    {
+                        "role":    "user",
+                        "content": (
+                            "Write the report for:\n"
+                            + json.dumps(enriched, indent=2, default=str)
+                        ),
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=1024,
+            )
         report = (resp.choices[0].message.content or "").strip()
 
     except Exception as exc:
