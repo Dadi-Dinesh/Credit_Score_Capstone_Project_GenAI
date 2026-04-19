@@ -31,6 +31,10 @@ import pandas as pd
 from groq import Groq
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+import operator
+from typing import TypedDict, Annotated, List, Optional, Union
+from langgraph.graph import StateGraph, END, START
+from langchain_core.runnables import RunnableConfig
 
 # =============================================================================
 # SECTION 1 -- CONFIGURATION
@@ -57,6 +61,31 @@ MAX_EXECUTOR_ITERS = 8
 # How many times the Reflector is allowed to request a retry before we
 # give up and proceed to the Reporter regardless.
 MAX_REFLECT_RETRIES = 2
+
+# =============================================================================
+# SECTION 1.5 -- LANGGRAPH STATE DEFINITION
+# =============================================================================
+
+class CreditIQState(TypedDict):
+    """
+    Formal schema for the LangGraph state.
+    Annotated fields use operator.add to automatically merge updates.
+    """
+    raw_input: dict
+    plan: Optional[List[dict]]
+    execution_log: Annotated[List[dict], operator.add]
+    ml_output: Optional[dict]
+    retrieved_rules: Optional[List[dict]] # We handle deduplication manually in the node
+    risk_flags: Optional[dict]
+    segment_score: Optional[dict]
+    decision_rationale: Optional[dict]
+    reflection: Optional[dict]
+    final_report: Optional[str]
+    final_decision: Optional[str]
+    audit_trail: Annotated[List[dict], operator.add]
+    error_log: Annotated[List[dict], operator.add]
+    reflect_retries: int
+    verbose: bool
 
 # =============================================================================
 # SECTION 2 -- MODULE-LEVEL CACHE VARIABLES
@@ -412,39 +441,21 @@ def predict_with_threshold(pkg, proba):
 # Every phase reads from and writes to this dict by key name.
 # =============================================================================
 
-def make_state(applicant_data):
+def make_state(applicant_data, verbose=True):
     """
-    Create and return a fresh pipeline state dict for one PER run.
-
-    The state dict is the single source of truth across all four phases.
-    Phases write their results into specific keys; downstream phases read them.
-
-    State layout
-    ------------
-    raw_input          -- dict   original applicant data from the caller
-    plan               -- list or None   step list from the Planner
-    execution_log      -- list   one record per tool call
-    ml_output          -- dict or None   result of preprocess_and_predict
-    retrieved_rules    -- list or None   accumulated RAG results
-    risk_flags         -- dict or None   result of compute_risk_flags
-    segment_score      -- dict or None   result of score_applicant_segment
-    decision_rationale -- dict or None   result of build_decision_rationale
-    reflection         -- dict or None   result of run_reflector
-    final_report       -- str or None    narrative from run_reporter
-    final_decision     -- str or None    "APPROVE" or "REJECT"
-    audit_trail        -- list   timestamped phase-level events
-    error_log          -- list   errors that did not crash the pipeline
-    reflect_retries    -- int    how many reflector retries have occurred
+    Initialise the pipeline state dictionary with raw applicant features.
 
     Parameters
     ----------
     applicant_data : dict
         Raw applicant feature dict provided by the caller.
+    verbose : bool
+        If True, print events to stdout.
 
     Returns
     -------
     dict
-        Initialised state dict. Pass this into run_planner() to start.
+        Initialised state dict.
     """
     return {
         "raw_input":          applicant_data,
@@ -461,6 +472,7 @@ def make_state(applicant_data):
         "audit_trail":        [],
         "error_log":          [],
         "reflect_retries":    0,
+        "verbose":            verbose,
     }
 
 
@@ -2063,133 +2075,192 @@ def run_reporter(state, groq_client, verbose=True):
     return report
 
 # =============================================================================
+# SECTION 16.5 -- LANGGRAPH IMPLEMENTATION
+# This section converts the Plan-Execute-Reflect phases into formal
+# LangGraph nodes and assembles the StateGraph.
+# =============================================================================
+
+def planner_node(state: CreditIQState, config: RunnableConfig):
+    """Node for Phase 1: Planning"""
+    applicant_data = state["raw_input"]
+    groq_client = config["configurable"]["groq_client"]
+    verbose = state.get("verbose", True)
+
+    log_event(state, "ORCHESTRATOR", "phase_1_planner_start")
+    plan = run_planner(applicant_data, groq_client, verbose)
+
+    return {
+        "plan": plan,
+        "audit_trail": [{
+            "phase": "ORCHESTRATOR",
+            "action": "phase_1_planner_done",
+            "detail": f"{len(plan)} steps",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }]
+    }
+
+def executor_node(state: CreditIQState, config: RunnableConfig):
+    """Node for Phase 2: Execution"""
+    groq_client = config["configurable"]["groq_client"]
+    verbose = state.get("verbose", True)
+
+    log_event(state, "ORCHESTRATOR", "phase_2_executor_start")
+    # run_executor mutates state in place in the current code,
+    # but we return the updates for LangGraph standard patterns.
+    new_state = run_executor(state, groq_client, verbose)
+
+    return {
+        "ml_output": new_state["ml_output"],
+        "risk_flags": new_state["risk_flags"],
+        "segment_score": new_state["segment_score"],
+        "retrieved_rules": new_state["retrieved_rules"],
+        "decision_rationale": new_state["decision_rationale"],
+        "final_decision": new_state["final_decision"],
+        "execution_log": [], # The logs are already added via log_tool_call/dispatch_tool
+        "audit_trail": [{
+            "phase": "ORCHESTRATOR",
+            "action": "phase_2_executor_done",
+            "detail": json.dumps(list(get_tools_called(new_state))),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }]
+    }
+
+def reflector_node(state: CreditIQState, config: RunnableConfig):
+    """Node for Phase 3: Reflection"""
+    groq_client = config["configurable"]["groq_client"]
+    verbose = state.get("verbose", True)
+
+    log_event(state, "ORCHESTRATOR", f"phase_3_reflect_attempt_{state['reflect_retries'] + 1}")
+    reflection = run_reflector(state, groq_client, verbose)
+
+    return {
+        "reflection": reflection,
+        "reflect_retries": state["reflect_retries"] + 1,
+        "audit_trail": [{
+            "phase": "ORCHESTRATOR",
+            "action": "phase_3_reflect_done",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }]
+    }
+
+def reporter_node(state: CreditIQState, config: RunnableConfig):
+    """Node for Phase 4: Reporting"""
+    groq_client = config["configurable"]["groq_client"]
+    verbose = state.get("verbose", True)
+
+    log_event(state, "ORCHESTRATOR", "phase_4_reporter_start")
+    report = run_reporter(state, groq_client, verbose)
+
+    return {
+        "final_report": report,
+        "audit_trail": [{
+            "phase": "ORCHESTRATOR",
+            "action": "phase_4_reporter_done",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }]
+    }
+
+def reflection_router(state: CreditIQState):
+    """Router for the conditional edge after reflection."""
+    reflection = state.get("reflection") or {}
+    if reflection.get("pass", True):
+        return "report"
+
+    if state["reflect_retries"] >= MAX_REFLECT_RETRIES:
+        return "report"
+
+    return "execute"
+
+def build_creditiq_graph():
+    """Builds and compiles the StateGraph."""
+    workflow = StateGraph(CreditIQState)
+
+    # Add Nodes
+    workflow.add_node("planner", planner_node)
+    workflow.add_node("executor", executor_node)
+    workflow.add_node("reflector", reflector_node)
+    workflow.add_node("reporter", reporter_node)
+
+    # Add Edges
+    workflow.add_edge(START, "planner")
+    workflow.add_edge("planner", "executor")
+    workflow.add_edge("executor", "reflector")
+
+    # Conditional Edge (The Loop)
+    workflow.add_conditional_edges(
+        "reflector",
+        reflection_router,
+        {
+            "execute": "executor",
+            "report": "reporter"
+        }
+    )
+
+    workflow.add_edge("reporter", END)
+
+    return workflow.compile()
+
+def save_graph_visualization(output_path="graph.md"):
+    """
+    Generates a Mermaid representation of the LangGraph and saves it to a file.
+    """
+    app = build_creditiq_graph()
+    try:
+        # Get the Mermaid representation
+        mermaid_graph = app.get_graph().draw_mermaid()
+        
+        content = f"# CreditIQ Agent Logic\n\n```mermaid\n{mermaid_graph}\n```"
+        
+        with open(output_path, "w") as f:
+            f.write(content)
+        
+        print(f"Graph visualization saved to {output_path}")
+        return content
+    except Exception as e:
+        print(f"Could not generate graph visualization: {e}")
+        return None
+
+# =============================================================================
 # SECTION 17 -- ORCHESTRATOR: run_per_agent()
 # =============================================================================
 
 def run_per_agent(applicant_data, verbose=True):
     """
-    Run the full Plan-Execute-Reflect pipeline for one loan applicant.
-
-    This is the single entry point for callers. It creates a fresh state dict,
-    runs all four phases in order, and returns the completed state.
-
-    Execution flow
-    --------------
-    Phase 1 -- run_planner()   -> state["plan"]
-    Phase 2 -- run_executor()  -> state["ml_output"], ["risk_flags"], etc.
-    Phase 3 -- run_reflector() -> state["reflection"]
-        If reflection.pass is False and retry_steps is non-empty:
-            Re-run the listed tools (max MAX_REFLECT_RETRIES times).
-    Phase 4 -- run_reporter()  -> state["final_report"]
-
-    Parameters
-    ----------
-    applicant_data : dict
-        Raw applicant feature dict. All keys are optional; missing ones
-        are filled with training-set defaults during preprocessing.
-    verbose : bool
-        If True, print a step-by-step trace to stdout.
-        Set to False for batch processing.
-
-    Returns
-    -------
-    dict
-        The completed pipeline state dict.
-
-    Key fields in the returned state
-    ---------------------------------
-    state["final_decision"]      -- "APPROVE" | "REJECT" | None
-    state["ml_output"]           -- {prediction, probability, confidence_band, decision}
-    state["segment_score"]       -- {percentiles, composite_risk_score, segment}
-    state["risk_flags"]          -- {flags, severity, flag_count}
-    state["decision_rationale"]  -- structured decision JSON
-    state["final_report"]        -- narrative string ready for display
-    state["reflection"]          -- {pass, gaps, notes}
-    state["audit_trail"]         -- list of timestamped events
-
-    Raises
-    ------
-    EnvironmentError
-        If GROQ_API_KEY is not set in the environment.
+    Run the full Plan-Execute-Reflect pipeline using LangGraph.
     """
     api_key = os.environ.get("GROQ_API_KEY", "")
     if not api_key:
-        raise EnvironmentError(
-            "GROQ_API_KEY is not set. "
-            "Set it with: os.environ['GROQ_API_KEY'] = 'your-key'"
-        )
+        raise EnvironmentError("GROQ_API_KEY is not set.")
 
     groq_client = Groq(api_key=api_key)
-    state       = make_state(applicant_data)
+    
+    # Initialize State
+    initial_state = make_state(applicant_data, verbose=verbose)
 
     if verbose:
         print("\n" + "=" * 66)
-        print("  PLAN-EXECUTE-REFLECT AGENT -- START")
+        print("  LANGGRAPH PER AGENT -- START")
         print("=" * 66)
-        # json.dumps prevents Python dict repr reaching Colab's JS frontend
-        print("  Input: " + json.dumps(applicant_data, default=str))
 
-    # Phase 1: Plan
-    log_event(state, "ORCHESTRATOR", "phase_1_planner_start")
-    state["plan"] = run_planner(applicant_data, groq_client, verbose)
-    log_event(state, "ORCHESTRATOR", "phase_1_planner_done",
-              f"{len(state['plan'])} steps")
+    # Build and Compile Graph
+    app = build_creditiq_graph()
 
-    # Phase 2: Execute
-    log_event(state, "ORCHESTRATOR", "phase_2_executor_start")
-    state = run_executor(state, groq_client, verbose)
-    log_event(state, "ORCHESTRATOR", "phase_2_executor_done",
-              json.dumps(list(get_tools_called(state))))
-
-    # Phase 3: Reflect (with limited retry)
-    for retry_num in range(MAX_REFLECT_RETRIES + 1):
-        log_event(state, "ORCHESTRATOR", f"phase_3_reflect_attempt_{retry_num + 1}")
-        reflection          = run_reflector(state, groq_client, verbose)
-        state["reflection"] = reflection
-
-        if reflection.get("pass", True):
-            break
-
-        retry_steps = reflection.get("retry_steps", [])
-        if not retry_steps or state["reflect_retries"] >= MAX_REFLECT_RETRIES:
-            if verbose:
-                print("  Reflection failed but retry cap reached -- proceeding.")
-            break
-
-        state["reflect_retries"] += 1
-        if verbose:
-            # json.dumps prevents Python list repr in stdout
-            print("  Reflector requested retry of: " + json.dumps(retry_steps))
-
-        for tool_name in retry_steps:
-            if tool_name not in TOOL_REGISTRY:
-                continue
-            result_str, ok = dispatch_tool(
-                tool_name,
-                {"applicant_data": applicant_data},
-                state,
-            )
-            if verbose:
-                status = "OK" if ok else "ERROR"
-                print(f"    retry {tool_name}: {status}")
-
-    log_event(state, "ORCHESTRATOR", "phase_3_reflect_done")
-
-    # Phase 4: Report
-    log_event(state, "ORCHESTRATOR", "phase_4_reporter_start")
-    run_reporter(state, groq_client, verbose)
-    log_event(state, "ORCHESTRATOR", "phase_4_reporter_done")
+    # Invoke Graph
+    # We pass the groq_client in the config to avoid bloating the state
+    final_state = app.invoke(
+        initial_state,
+        config={"configurable": {"groq_client": groq_client}}
+    )
 
     if verbose:
         print("\n" + "=" * 66)
-        print("  PER AGENT -- COMPLETE")
-        print(f"  Decision  : {state['final_decision']}")
-        print("  Tools run : " + json.dumps(list(get_tools_called(state))))
-        print(f"  Retries   : {state['reflect_retries']}")
-        print(f"  Errors    : {len(state['error_log'])}")
+        print("  LANGGRAPH PER AGENT -- COMPLETE")
+        print(f"  Decision  : {final_state.get('final_decision')}")
+        print(f"  Retries   : {final_state.get('reflect_retries', 0)}")
+        print(f"  Errors    : {len(final_state.get('error_log', []))}")
         print("=" * 66)
 
-    return state
+    return final_state
 
 # =============================================================================
 # SECTION 18 -- UTILITY: print_per_trace()
